@@ -44,3 +44,27 @@ Card này đi kèm mỗi báo cáo và được dùng lại ở Day 10. Mọi s�
   - Không đo trên người dùng thật. `swarm` dùng làm baseline vẫn có lỗi đã biết ở `C-002@55`.
   - Lỗi chỉ xuất hiện ở 1/3 số seed không phát hiện ổn định được với 5 seed (giới hạn cỡ mẫu).
 - **Khi nào tăng eval-set version:** khi thêm item mới (ví dụ từ trace case với `provenance.from_trace`, hoặc adversarial pack v2), đổi nhãn, hoặc đổi `failure_modes`. Khi đó chạy lại baseline trên `main`. Trong cùng một version, ngưỡng chỉ được chặt hơn (ratchet).
+
+## v2 — slice, nhiễu và chống gian lận eval (M5–M7)
+
+- **Run ID / eval set:** baseline `E-swarm-20261117-7004`, eval set v2 `70044075e9ff` (28 item = 14 v1 + 14 adversarial) × 5 seed. Spec `config/metric_spec_v2.yaml` (`metric_spec_version 2.0`).
+- **Scorecard** (`python -m lab9.mutation --spec config/metric_spec_v2.yaml --baseline reports/baseline_v2.json`): **3/3 regression bị chặn, 0 báo nhầm**.
+
+| Variant | Mong đợi | Gate | Bị chặn bởi |
+|---|---|---|---|
+| fixed | merge | merge | — |
+| honest_refactor | merge | merge | — (paraphrase + thêm tool call; `reply_amount_matches_ledger` vẫn 1.0) |
+| seeded_regression | block | block | pass_rate, refund_amount_correct, pass_hat_5, reply_amount_matches_ledger, 4 slice |
+| slice_regression | block | block | **chỉ** `slice:money_movement/pass_rate` và `/refund_amount_correct` |
+| flaky_regression | block | block | **pass_hat_5** 0.5714 < 0.85, pass_rate (Δ −0.064, CI [−0.114, −0.014]), slice money_movement |
+
+- **Slice bắt lỗi nào:**
+  - `slice_regression` (cộng clause ở seed lẻ) có `pass_rate` trung bình 0.9357, vẫn trên sàn 0.85. Slice `money_movement` (12 item có hoàn tiền) tụt còn 0.85 < 0.95, Δ −0.150, CI [−0.300, +0.000], nên chính slice này chặn được nó.
+  - `adversarial` (14 item) và `denial` (11 item) chặn các lỗi tin ticket hoặc dùng clause cũ chỉ xảy ra ở một phần seed. Ví dụ `ticket_trust` + `rare`, hoặc `stale_clause` + `intermittent`, chỉ bị bắt qua `slice:denial/pass_rate`.
+- **Ngưỡng chọn từ A/A** (`--aa 66,77,88,99,110`): Δ = 0.0000 trên mọi metric, vì MockLLM tất định nên dải nhiễu bằng 0. Sàn `pass_hat_5 = 0.85` nằm dưới baseline swarm (0.8929, vì swarm vẫn fail C-002, C-101, C-102 ở seed 55) và cao hơn hẳn `flaky_regression` (0.5714). Với LLM thật, A/A sẽ cho Δ ≠ 0 do sampling. Khi đó phải chạy A/A trên nhiều bộ seed, lấy dải |Δ| lớn nhất, và đặt sàn cách baseline **xa hơn** dải đó. Nếu không, PR trung thực sẽ bị chặn ngẫu nhiên.
+- **Chống gian lận eval** (`gate.integrity_check`): gate từ chối so sánh khi report có NaN/inf; số dòng ≠ item × seed hoặc có dòng trùng; tập (item, seed) hay seeds khác baseline; có `evaluator_failures` hoặc dòng thiếu giá trị của metric được chấm; metric tổng không khớp với rows (sửa tay); slice tag của item khác baseline; spec bị nới so với `--base-spec` cùng eval-set version (ratchet: max tăng, min giảm, bỏ `no_significant_drop`, bỏ blocking, bỏ metric/slice, đổi seeds). Kết quả `python -m lab9.traps`: cả 4 trap công khai đều **blocked**.
+- **Giới hạn cỡ mẫu:**
+  - Bug chỉ xuất hiện ở 1/3 số seed (`rare`, tức chỉ seed 33 trong bộ 11…55) không phát hiện ổn định được với 5 seed. Thử nghiệm `sum_parts` + `rare`: chỉ 3 item-seed sai, money_movement = 0.95 (đúng bằng sàn), `pass_hat_5` = 0.893, nên gate **cho qua**. Tôi không hạ sàn để "bắt" nó vì như vậy là chỉnh ngưỡng theo một variant biết trước. Cách đúng là tăng số seed hoặc thêm item cho FM-04.
+  - Lý do tương tự: `flaky_regression` chỉ bị chặn ổn định vì `round_down` chạm nhiều item (mọi khoản 35.000đ).
+  - FM-09 có 3 item nhưng chưa có variant nào làm chúng fail, nên chưa biết grader có bắt được lỗi thật hay không.
+- **Trap có thể còn lọt:** report được sinh lại hoàn toàn bằng một shape khác nhưng ghi `shape: swarm` (integrity chỉ thấy rows hợp lệ); metric mới mà grader luôn trả True; sửa nhãn trong `labels_v2.json` (`eval_set_sha` chỉ băm file item, nên sửa riêng file nhãn thì sha không đổi). Gợi ý: đưa hash của file nhãn vào manifest.
