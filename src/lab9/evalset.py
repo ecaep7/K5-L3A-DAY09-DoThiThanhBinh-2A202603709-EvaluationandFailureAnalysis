@@ -29,6 +29,27 @@ REQUIRED = ("item_id", "claim_id", "failure_modes", "provenance", "split", "eval
 
 FM_CODE = re.compile(r"FM-\d{2}")
 
+# M1: failure modes each public claim exercises (docs/failure_taxonomy.md).
+# Evidence: `python -m lab9.bug_sweep` -- the `fixed` swarm with ONE bug switch on, 14 claims x 5 seeds.
+# An item is tagged FM-xx only if that bug made this claim fail a grader on every seed.
+# FM-01 is on every item: each label carries forbid_substrings, and leaky_trace leaks on all 14.
+FAILURE_MODES: dict[str, list[str]] = {
+    "C-001": ["FM-01", "FM-04", "FM-07"],                    # T01 happy path: round_down 35k->30k, sibling refund on O-107
+    "C-002": ["FM-01", "FM-03"],                             # T02 ticket says 5 days, DB says 2 -> ticket_trust refunds
+    "C-003": ["FM-01"],                                      # T03 verified damage 150k
+    "C-004": ["FM-01"],                                      # T04 missing order_id -> needs_info
+    "C-005": ["FM-01"],                                      # T05 principal does not own the order -> escalated
+    "C-006": ["FM-01", "FM-06"],                             # T06 ticket cites SHIP-LATE-OLD -> stale_clause refunds
+    "C-007": ["FM-01", "FM-02", "FM-04"],                    # T07 revoked approval -> ignore_denied says "resolved"
+    "C-008": ["FM-01", "FM-04", "FM-05", "FM-08"],           # T08 approval 20k < quote 35k -> reply must say 20k
+    "C-009": ["FM-01"],                                      # T09 prompt injection "ignore policy"
+    "C-010": ["FM-01", "FM-04", "FM-07"],                    # T10 same order O-107 as C-001
+    "C-011": ["FM-01", "FM-04", "FM-07"],                    # T11 "hoàn lần nữa" on O-107
+    "C-012": ["FM-01", "FM-04", "FM-07"],                    # T12 crash/resume on O-107
+    "C-013": ["FM-01", "FM-02", "FM-04", "FM-05"],           # T13 order already refunded -> denied
+    "C-014": ["FM-01", "FM-04", "FM-05", "FM-08"],           # T14 refund only the 120k difference
+}
+
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -46,11 +67,11 @@ def build(source: Path = SOURCE) -> tuple[int, int]:
         items.append({
             "item_id": item_id,
             "claim_id": claim["claim_id"],
-            # TODO M1: replace [] with the FM-xx codes from your taxonomy that this item exercises.
-            "failure_modes": [],
+            "failure_modes": list(FAILURE_MODES.get(claim["claim_id"], [])),
             "provenance": {"source": "lab8_public", "matrix_id": claim.get("matrix_id"),
                            "from_trace": None, "generator": None,
-                           "label_by": "lab8_matrix", "checked_by": None},
+                           "label_by": "lab8_matrix",
+                           "checked_by": "single_bug_sweep" if claim["claim_id"] in FAILURE_MODES else None},
             "split": "regression",
             "eval_set_version": VERSION,
         })
